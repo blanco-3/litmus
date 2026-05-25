@@ -1,0 +1,18 @@
+{
+  "network": "aeneid",
+  "chainId": 1315,
+  "deployed": true,
+  "contracts": {
+    "OpenWriteCondition": "0x2E5cdbCBb12c8cb9264c9CEefD91ff23eDF33299",
+    "TokenBalanceCondition": "0x817FB42104860B1a432fF4eC2d7c5AD8964fE9a9",
+    "NFTHolderCondition": "0xC704A829d16ab821871b0Ec30097A1f7c4b51C9f",
+    "NativeBalanceCondition": "0x743A1980d19eB13D9fa19868F5721e04392e5b33",
+    "ActivityRegistry": "0x154AC00A10EED8Bb9A3E20087eF7C41c0CB01248",
+    "TxCountCondition": "0xe7720dAdEcdcB42953A46B9653983413B5080489",
+    "ContractCallCountCondition": "0xB1435C3E1467874D4b553B5da7D40928Cd37b230",
+    "FirstTxBeforeCondition": "0x008EA47c2D6C18B3E7Bb7b260E534E9dd72b2E27",
+    "MultiCondition": "0x43C0a677a1FE0367500C1CE123a595CaD8fD7a15",
+    "TimeLockedCondition": "0xb4520023a48859593AA950133B9c414fE74411eF",
+    "StoryIPLicenseCondition": "0x2d5517A5A809705Ac34A85C7Eb6b2d3b89C90349"
+  }
+}
