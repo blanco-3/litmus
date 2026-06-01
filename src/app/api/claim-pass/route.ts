@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
       address: PASS_ADDR, abi: PASS_ABI,
       functionName: 'balanceOf', args: [address],
     })
-    if (balance > 0n) {
+    if (balance > BigInt(0)) {
       return NextResponse.json({ alreadyClaimed: true, address })
     }
 
