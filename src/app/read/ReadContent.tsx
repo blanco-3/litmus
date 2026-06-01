@@ -306,9 +306,18 @@ export default function ReadContent() {
               {vaultMeta.title}
             </div>
             {vaultMeta.conditionPreview && (
-              <div style={{ borderLeft: '2px solid #1A1AFF', paddingLeft: '10px', marginTop: '4px' }}>
-                <div style={{ fontSize: '9px', color: '#1A1AFF', letterSpacing: '0.15em', marginBottom: '4px' }}>
-                  ACCESS CONDITION
+              <div style={{
+                borderLeft: `2px solid ${vaultMeta.conditionPreview.toLowerCase().startsWith('pay ') ? '#F0A800' : '#1A1AFF'}`,
+                paddingLeft: '10px',
+                marginTop: '4px',
+              }}>
+                <div style={{
+                  fontSize: '9px',
+                  color: vaultMeta.conditionPreview.toLowerCase().startsWith('pay ') ? '#F0A800' : '#1A1AFF',
+                  letterSpacing: '0.15em',
+                  marginBottom: '4px',
+                }}>
+                  {vaultMeta.conditionPreview.toLowerCase().startsWith('pay ') ? 'PAID ACCESS' : 'ACCESS CONDITION'}
                 </div>
                 <pre style={{ margin: 0, fontSize: '11px', color: '#888', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
                   {vaultMeta.conditionPreview}
@@ -413,7 +422,7 @@ export default function ReadContent() {
               <button
                 onClick={handlePay}
                 disabled={payState === 'paying' || payState === 'paid'}
-                style={{ ...styles.btnSmall, marginTop: '12px', borderColor: '#1A1AFF', color: '#1A1AFF' }}
+                style={{ ...styles.btnSmall, marginTop: '12px', borderColor: '#F0A800', color: '#F0A800' }}
               >
                 {payState === 'paying' ? '[ sending... ]' : payState === 'paid' ? '[ paid — verifying... ]' : `[ Pay ${formatEther(paymentInfo.requiredWei)} IP ]`}
               </button>

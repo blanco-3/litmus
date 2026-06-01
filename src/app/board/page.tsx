@@ -56,13 +56,20 @@ export default function BoardPage() {
   )
 }
 
+const GOLD = '#F0A800'
+
 function VaultCard({ vault }: { vault: VaultMeta }) {
   const date = vault.createdAt
     ? new Date(vault.createdAt).toLocaleDateString('en-CA') // YYYY-MM-DD
     : ''
 
+  const isPay = vault.conditionPreview?.toLowerCase().startsWith('pay ')
+
   return (
-    <article style={styles.card}>
+    <article style={{
+      ...styles.card,
+      ...(isPay ? { border: `1px solid ${GOLD}`, backgroundColor: '#070600' } : {}),
+    }}>
       <div style={styles.cardTop}>
         <span style={styles.uuid}>#{vault.uuid}</span>
         <span style={styles.date}>{date}</span>
@@ -71,16 +78,29 @@ function VaultCard({ vault }: { vault: VaultMeta }) {
       <h2 style={styles.cardTitle}>{vault.title}</h2>
 
       {vault.conditionPreview && (
-        <div style={styles.conditionBox}>
-          <div style={styles.conditionLabel}>ACCESS CONDITION</div>
+        <div style={{
+          ...styles.conditionBox,
+          ...(isPay ? { borderLeftColor: GOLD } : {}),
+        }}>
+          <div style={{ ...styles.conditionLabel, ...(isPay ? { color: GOLD } : {}) }}>
+            {isPay ? 'PAID ACCESS' : 'ACCESS CONDITION'}
+          </div>
           <pre style={styles.conditionText}>{vault.conditionPreview}</pre>
         </div>
       )}
 
       <div style={styles.cardFooter}>
-        <div style={styles.lockBadge}>🔒 GATED</div>
-        <Link href={`/read?uuid=${vault.uuid}`} style={styles.readBtn}>
-          [ Verify & Read ]
+        <div style={{ ...styles.lockBadge, ...(isPay ? { color: GOLD } : {}) }}>
+          {isPay ? '💰 PAY-TO-READ' : '🔒 GATED'}
+        </div>
+        <Link
+          href={`/read?uuid=${vault.uuid}`}
+          style={{
+            ...styles.readBtn,
+            ...(isPay ? { borderColor: GOLD, color: GOLD } : {}),
+          }}
+        >
+          {isPay ? '[ Pay & Read ]' : '[ Verify & Read ]'}
         </Link>
       </div>
     </article>
