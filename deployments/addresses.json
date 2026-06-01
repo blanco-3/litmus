@@ -14,6 +14,9 @@
     "FirstTxBeforeCondition": "0x0C3a91e3508cd5dec201DE0e345Bb81f189959F8",
     "MultiCondition": "0x1F45b40e9ebdB9639Ff308864f9872b86FdA0Ca4",
     "TimeLockedCondition": "0xD602e74f339Acc0bf72e66EB9F97FFB806fBc477",
-    "StoryIPLicenseCondition": "0x4C197b6F0F9DCDadb0782E02b7a1b6cF0493bA94"
+    "StoryIPLicenseCondition": "0x4C197b6F0F9DCDadb0782E02b7a1b6cF0493bA94",
+    "LitmusPass": "0xdde0fee35f6f4b4ea411b5f657bb4d12d2f0035f",
+    "LitmusCoin": "0x78b9da2013bcb2fafc929aa8f20c6515584e4fd1",
+    "StoryLicenseToken": "0xFe3838BFb30B34170F00030B52eA4893d8aAC6bC"
   }
 }
