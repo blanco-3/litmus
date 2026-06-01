@@ -4,11 +4,24 @@ import Link from 'next/link'
 import { useAppKit, useAppKitAccount } from '@reown/appkit/react'
 import { useBalance } from 'wagmi'
 import { formatEther } from 'viem'
+import { useEffect, useRef } from 'react'
 
 export function Header() {
   const { open } = useAppKit()
   const { address, isConnected } = useAppKitAccount()
   const { data: balance } = useBalance({ address: address as `0x${string}` | undefined })
+  const registeredRef = useRef<string | null>(null)
+
+  // Auto-register activity in ActivityRegistry when wallet connects
+  useEffect(() => {
+    if (!address || registeredRef.current === address) return
+    registeredRef.current = address
+    fetch('/api/register-activity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address }),
+    }).catch(() => {})
+  }, [address])
 
   const short = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : ''
   const ip = balance ? `${parseFloat(formatEther(balance.value)).toFixed(2)} IP` : ''

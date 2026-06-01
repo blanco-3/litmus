@@ -1,4 +1,8 @@
+'use client'
+
 import Link from 'next/link'
+import { useState } from 'react'
+import { useAppKitAccount } from '@reown/appkit/react'
 
 function TestTube({ side }: { side: 'left' | 'right' }) {
   const isLeft = side === 'left'
@@ -129,6 +133,25 @@ function TestTube({ side }: { side: 'left' | 'right' }) {
 }
 
 export default function Home() {
+  const { address, isConnected } = useAppKitAccount()
+  const [claimState, setClaimState] = useState<'idle' | 'loading' | 'done' | 'already'>('idle')
+
+  async function handleClaim() {
+    if (!address) return
+    setClaimState('loading')
+    try {
+      const res = await fetch('/api/claim-pass', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address }),
+      })
+      const data = await res.json()
+      setClaimState(data.alreadyClaimed ? 'already' : 'done')
+    } catch {
+      setClaimState('idle')
+    }
+  }
+
   return (
     <main
       style={{
@@ -212,6 +235,47 @@ export default function Home() {
           transaction history, IP licenses. Not a paywall. A proof wall.
         </p>
       </div>
+      {/* NFT Claim — bottom-right corner */}
+      {isConnected && (
+        <div style={{
+          position: 'fixed',
+          bottom: '24px',
+          right: '24px',
+          zIndex: 10,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'flex-end',
+          gap: '6px',
+        }}>
+          {claimState === 'done' && (
+            <span style={{ fontSize: '11px', color: '#1A1AFF', letterSpacing: '0.05em' }}>
+              Litmus Pass claimed!
+            </span>
+          )}
+          {claimState === 'already' && (
+            <span style={{ fontSize: '11px', color: '#666', letterSpacing: '0.05em' }}>
+              Already claimed
+            </span>
+          )}
+          <button
+            onClick={handleClaim}
+            disabled={claimState === 'loading' || claimState === 'done' || claimState === 'already'}
+            style={{
+              fontFamily: 'monospace',
+              fontSize: '11px',
+              fontWeight: 700,
+              padding: '8px 14px',
+              border: '1px solid #1A1AFF',
+              color: claimState === 'done' || claimState === 'already' ? '#444' : '#1A1AFF',
+              backgroundColor: 'transparent',
+              cursor: claimState === 'idle' ? 'pointer' : 'default',
+              letterSpacing: '0.05em',
+            }}
+          >
+            {claimState === 'loading' ? '[ minting... ]' : '[ Claim Litmus Pass ]'}
+          </button>
+        </div>
+      )}
     </main>
   )
 }
