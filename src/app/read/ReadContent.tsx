@@ -2,31 +2,78 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { useAccount, useConnect, useDisconnect, usePublicClient, useWalletClient } from 'wagmi'
-import { ensureWasm, createCDRClient, decryptContent } from '@/lib/cdr'
-import addresses from '../../../deployments/addresses.json'
+import { useAccount, usePublicClient, useWalletClient } from 'wagmi'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { ensureWasm, createCDRClient, LitmusStorageProvider, getPinataJwt, getVaultMeta, type VaultMeta } from '@/lib/cdr'
+import { ALWAYS_TRUE_CONDITION, decodeHybridData } from '@/lib/conditions'
 import type { Hex } from 'viem'
 
 type VerifyState = 'idle' | 'checking' | 'proven' | 'failed' | 'decrypting' | 'decrypted' | 'error'
 
+const CDR_ADDR = '0xcccccc0000000000000000000000000000000005' as Hex
+
+const VAULT_ABI = [
+  {
+    name: 'vaults',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'uuid', type: 'uint32' }],
+    outputs: [
+      {
+        name: 'vault',
+        type: 'tuple',
+        components: [
+          { name: 'updatable', type: 'bool' },
+          { name: 'writeConditionAddr', type: 'address' },
+          { name: 'readConditionAddr', type: 'address' },
+          { name: 'writeConditionData', type: 'bytes' },
+          { name: 'readConditionData', type: 'bytes' },
+          { name: 'encryptedData', type: 'bytes' },
+        ],
+      },
+    ],
+  },
+] as const
+
+const CONDITION_ABI = [
+  {
+    name: 'checkReadCondition',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'uuid', type: 'uint32' },
+      { name: 'conditionData', type: 'bytes' },
+      { name: 'accessAuxData', type: 'bytes' },
+      { name: 'reader', type: 'address' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+] as const
+
 export default function ReadContent() {
   const searchParams = useSearchParams()
   const { address, isConnected } = useAccount()
-  const { connectors, connect } = useConnect()
-  const { disconnect } = useDisconnect()
   const publicClient = usePublicClient()
   const { data: walletClient } = useWalletClient()
 
-  const [uuid, setUuid] = useState(searchParams.get('uuid') ?? '')
-  const [encryptedData, setEncryptedData] = useState(searchParams.get('data') ?? '')
+  const uuid = searchParams.get('uuid') ?? ''
   const [verifyState, setVerifyState] = useState<VerifyState>('idle')
   const [decryptedContent, setDecryptedContent] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [litmusProgress, setLitmusProgress] = useState(0)
   const [litmusColor, setLitmusColor] = useState<'#1A1AFF' | '#CC0000' | '#444'>('#444')
+  const [vaultMeta, setVaultMeta] = useState<VaultMeta | null>(null)
+  const [elapsedSec, setElapsedSec] = useState(0)
+  const [dots, setDots] = useState('')
   const animFrameRef = useRef<number | null>(null)
+  const decryptTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const dotsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Pre-fetched vault data — eliminates one RPC round-trip when verify is clicked
+  const vaultCacheRef = useRef<{ readConditionAddr: Hex; readConditionData: Hex } | null>(null)
+  // Pre-created CDR client — ready before verify is clicked
+  const cdrClientRef = useRef<ReturnType<typeof createCDRClient> | null>(null)
 
-  // Animate litmus strip fill
   function animateLitmus(targetColor: '#1A1AFF' | '#CC0000') {
     setLitmusColor(targetColor)
     setLitmusProgress(0)
@@ -35,7 +82,7 @@ export default function ReadContent() {
     function step(ts: number) {
       if (!start) start = ts
       const elapsed = ts - start
-      const progress = Math.min(elapsed / 1200, 1) // 1.2s animation
+      const progress = Math.min(elapsed / 1200, 1)
       setLitmusProgress(progress)
       if (progress < 1) {
         animFrameRef.current = requestAnimationFrame(step)
@@ -48,12 +95,48 @@ export default function ReadContent() {
   useEffect(() => {
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
+      if (decryptTimerRef.current) clearInterval(decryptTimerRef.current)
+      if (dotsTimerRef.current) clearInterval(dotsTimerRef.current)
     }
   }, [])
 
+  // Pre-init WASM on mount so it's ready before the user clicks Verify
+  useEffect(() => {
+    ensureWasm().catch(() => {})
+  }, [])
+
+  // Pre-create CDR client when walletClient becomes available
+  useEffect(() => {
+    if (!publicClient || !walletClient) return
+    cdrClientRef.current = createCDRClient(publicClient, walletClient)
+  }, [publicClient, walletClient])
+
+  // Pre-fetch vault struct so verify click skips the first RPC call
+  useEffect(() => {
+    if (!uuid || !publicClient) return
+    publicClient.readContract({
+      address: CDR_ADDR,
+      abi: VAULT_ABI,
+      functionName: 'vaults',
+      args: [Number(uuid) as never],
+    }).then((v) => {
+      vaultCacheRef.current = v as { readConditionAddr: Hex; readConditionData: Hex }
+    }).catch(() => {})
+  }, [uuid, publicClient])
+
+  // Load vault metadata from Pinata on mount
+  useEffect(() => {
+    if (!uuid) return
+    try {
+      const jwt = getPinataJwt()
+      getVaultMeta(jwt, Number(uuid)).then(setVaultMeta).catch(() => {})
+    } catch {
+      // JWT not set — skip metadata
+    }
+  }, [uuid])
+
   async function handleVerify() {
     if (!uuid.trim()) return setErrorMsg('Enter a UUID.')
-    if (!encryptedData.trim()) return setErrorMsg('No encrypted content found. Check the share link.')
     if (!publicClient || !walletClient || !address) return setErrorMsg('Connect your wallet first.')
 
     setErrorMsg('')
@@ -62,65 +145,51 @@ export default function ReadContent() {
     setLitmusColor('#444')
 
     try {
+      // ensureWasm() was already called on mount — this is a no-op if WASM is ready
       await ensureWasm()
-      const client = createCDRClient(publicClient, walletClient)
 
-      // Read vault to get the read condition addr + condition data
-      const cdrAddr = '0xcccccc0000000000000000000000000000000005' as Hex
-      const vaultAbi = [
-        {
-          name: 'vaults',
-          type: 'function',
-          stateMutability: 'view',
-          inputs: [{ name: 'uuid', type: 'uint32' }],
-          outputs: [
-            {
-              name: 'vault',
-              type: 'tuple',
-              components: [
-                { name: 'updatable', type: 'bool' },
-                { name: 'writeConditionAddr', type: 'address' },
-                { name: 'readConditionAddr', type: 'address' },
-                { name: 'writeConditionData', type: 'bytes' },
-                { name: 'readConditionData', type: 'bytes' },
-                { name: 'encryptedData', type: 'bytes' },
-              ],
-            },
-          ],
-        },
-      ] as const
-
-      const vault = await publicClient.readContract({
-        address: cdrAddr,
-        abi: vaultAbi,
+      // 1. Use pre-fetched vault data or fall back to a live RPC call
+      const vault = (vaultCacheRef.current ?? await publicClient.readContract({
+        address: CDR_ADDR,
+        abi: VAULT_ABI,
         functionName: 'vaults',
         args: [Number(uuid) as never],
-      }) as {
+      })) as {
         readConditionAddr: Hex
         readConditionData: Hex
       }
 
-      // Call checkReadCondition on the vault's condition contract
-      const conditionAbi = [
-        {
-          name: 'checkReadCondition',
-          type: 'function',
-          stateMutability: 'view',
-          inputs: [
-            { name: 'reader', type: 'address' },
-            { name: 'conditionData', type: 'bytes' },
-            { name: 'accessAuxData', type: 'bytes' },
-          ],
-          outputs: [{ name: '', type: 'bool' }],
-        },
-      ] as const
+      // 2. Determine the real condition to check.
+      //    Hybrid format: readConditionAddr = always-true contract,
+      //    readConditionData = abi.encode(realConditionAddr, realConditionData).
+      //    Fallback: old-format vault uses readConditionAddr directly.
+      let conditionAddr = vault.readConditionAddr
+      let conditionData = vault.readConditionData
 
-      const canRead = await publicClient.readContract({
-        address: vault.readConditionAddr,
-        abi: conditionAbi,
-        functionName: 'checkReadCondition',
-        args: [address, vault.readConditionData, '0x'],
-      })
+      if (vault.readConditionAddr.toLowerCase() === ALWAYS_TRUE_CONDITION.toLowerCase()) {
+        const decoded = decodeHybridData(vault.readConditionData)
+        if (decoded) {
+          conditionAddr = decoded.conditionAddr
+          conditionData = decoded.conditionData
+        }
+      }
+
+      // 3. Off-chain condition check for Litmus animation
+      let canRead: boolean
+      try {
+        canRead = await publicClient.readContract({
+          address: conditionAddr,
+          abi: CONDITION_ABI,
+          functionName: 'checkReadCondition',
+          args: [Number(uuid), conditionData, '0x', address],
+        }) as boolean
+      } catch {
+        // Old vault with incompatible condition contract interface — treat as not verified
+        throw new Error(
+          `This vault was published before the latest update and cannot be verified. ` +
+          `Please publish a new vault at /publish — conditions will work correctly.`
+        )
+      }
 
       if (!canRead) {
         setVerifyState('failed')
@@ -128,76 +197,89 @@ export default function ReadContent() {
         return
       }
 
-      // Proven — animate blue, then decrypt
+      // Condition passed — animate blue, then decrypt
       setVerifyState('proven')
       animateLitmus('#1A1AFF')
 
-      // Wait for animation to mostly complete before decrypting
-      await new Promise((r) => setTimeout(r, 800))
+      await new Promise((r) => setTimeout(r, 300))
       setVerifyState('decrypting')
+      setElapsedSec(0)
+      setDots('')
+      decryptTimerRef.current = setInterval(() => setElapsedSec((s) => s + 1), 1000)
+      dotsTimerRef.current = setInterval(() => setDots((d) => (d.length >= 3 ? '' : d + '.')), 400)
 
-      const { dataKey } = await client.consumer.accessCDR({
+      // 3. Download + decrypt via CDR SDK (validators provide the data key)
+      const pinataJwt = getPinataJwt()
+      const storageProvider = new LitmusStorageProvider(pinataJwt)
+      const client = cdrClientRef.current ?? createCDRClient(publicClient, walletClient)
+
+      const { content } = await client.consumer.downloadFile({
         uuid: Number(uuid),
         accessAuxData: '0x',
+        storageProvider,
+        timeoutMs: 120_000,
       })
 
-      const plaintext = await decryptContent(encryptedData, dataKey)
-      setDecryptedContent(plaintext)
+      if (decryptTimerRef.current) { clearInterval(decryptTimerRef.current); decryptTimerRef.current = null }
+      if (dotsTimerRef.current) { clearInterval(dotsTimerRef.current); dotsTimerRef.current = null }
+      setDecryptedContent(new TextDecoder().decode(content))
       setVerifyState('decrypted')
     } catch (err: unknown) {
+      if (decryptTimerRef.current) { clearInterval(decryptTimerRef.current); decryptTimerRef.current = null }
+      if (dotsTimerRef.current) { clearInterval(dotsTimerRef.current); dotsTimerRef.current = null }
       setErrorMsg(err instanceof Error ? err.message : String(err))
       setVerifyState('error')
       animateLitmus('#CC0000')
     }
   }
 
-  const isDeployed = addresses.deployed
+  const canVerify = isConnected && uuid.trim().length > 0
+
+  // No UUID in URL → redirect to board
+  if (!uuid) {
+    return (
+      <main style={styles.page}>
+        <a href="/board" style={styles.back}>← LITMUS</a>
+        <h1 style={styles.title}>[ Read ]</h1>
+        <p style={{ fontFamily: 'monospace', fontSize: '13px', color: '#555', margin: 0 }}>
+          No content selected.{' '}
+          <a href="/board" style={{ color: '#fff' }}>Browse the board →</a>
+        </p>
+      </main>
+    )
+  }
 
   return (
     <main style={styles.page}>
-      <a href="/" style={styles.back}>← LITMUS</a>
+      <a href="/board" style={styles.back}>← Board</a>
       <h1 style={styles.title}>[ Read ]</h1>
 
-      {/* Wallet */}
+      {/* Vault info */}
       <section style={styles.section}>
-        <div style={styles.sectionLabel}>WALLET</div>
-        {isConnected ? (
-          <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={styles.mono}>{address}</span>
-            <button onClick={() => disconnect()} style={styles.btnSmall}>Disconnect</button>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-            {connectors.map((c) => (
-              <button key={c.uid} onClick={() => connect({ connector: c })} style={styles.btn}>
-                Connect {c.name}
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* UUID + data input */}
-      <section style={styles.section}>
-        <div style={styles.sectionLabel}>CONTENT UUID</div>
-        <input
-          type="text"
-          value={uuid}
-          onChange={(e) => setUuid(e.target.value)}
-          placeholder="Enter UUID from share link..."
-          style={styles.input}
-        />
-        {!encryptedData && (
+        <div style={styles.sectionLabel}>VAULT #{uuid}</div>
+        {vaultMeta ? (
           <>
-            <div style={{ ...styles.sectionLabel, marginTop: '16px' }}>ENCRYPTED CONTENT (from share link)</div>
-            <input
-              type="text"
-              value={encryptedData}
-              onChange={(e) => setEncryptedData(e.target.value)}
-              placeholder="Paste encrypted data from share link..."
-              style={styles.input}
-            />
+            <div style={{ fontSize: '18px', fontWeight: 700, color: '#fff', lineHeight: 1.3 }}>
+              {vaultMeta.title}
+            </div>
+            {vaultMeta.conditionPreview && (
+              <div style={{ borderLeft: '2px solid #1A1AFF', paddingLeft: '10px', marginTop: '4px' }}>
+                <div style={{ fontSize: '9px', color: '#1A1AFF', letterSpacing: '0.15em', marginBottom: '4px' }}>
+                  ACCESS CONDITION
+                </div>
+                <pre style={{ margin: 0, fontSize: '11px', color: '#888', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                  {vaultMeta.conditionPreview}
+                </pre>
+              </div>
+            )}
+            {vaultMeta.createdAt > 0 && (
+              <div style={{ fontSize: '10px', color: '#444' }}>
+                {new Date(vaultMeta.createdAt).toLocaleDateString('en-CA')}
+              </div>
+            )}
           </>
+        ) : (
+          <div style={{ fontSize: '13px', color: '#555' }}>UUID {uuid}</div>
         )}
       </section>
 
@@ -205,7 +287,6 @@ export default function ReadContent() {
       <section style={styles.section}>
         <div style={styles.sectionLabel}>LITMUS TEST</div>
         <div style={styles.litmusOuter}>
-          {/* Fill bar */}
           <div
             style={{
               position: 'absolute',
@@ -214,10 +295,9 @@ export default function ReadContent() {
               height: '100%',
               width: `${litmusProgress * 100}%`,
               backgroundColor: litmusColor,
-              transition: 'width 0ms', // driven by rAF
+              transition: 'width 0ms',
             }}
           />
-          {/* Label */}
           <span style={styles.litmusLabel}>
             {verifyState === 'idle' && 'AWAITING VERIFICATION'}
             {verifyState === 'checking' && 'CHECKING CONDITIONS...'}
@@ -229,16 +309,42 @@ export default function ReadContent() {
           </span>
         </div>
 
-        {(isConnected && verifyState === 'idle') || verifyState === 'error' ? (
-          <button
-            onClick={handleVerify}
-            style={{ ...styles.btn, marginTop: '16px' }}
-          >
+        {(verifyState === 'idle' || verifyState === 'error') && canVerify ? (
+          <button onClick={handleVerify} style={{ ...styles.btn, marginTop: '16px' }}>
             [ Verify & Decrypt ]
           </button>
-        ) : verifyState === 'checking' || verifyState === 'decrypting' ? (
+        ) : (verifyState === 'idle' || verifyState === 'error') && !canVerify ? (
+          <div style={{ color: '#444', fontFamily: 'monospace', fontSize: '12px', marginTop: '16px' }}>
+            Connect wallet to verify.
+          </div>
+        ) : verifyState === 'checking' ? (
           <div style={{ color: '#666', fontFamily: 'monospace', fontSize: '12px', marginTop: '16px' }}>
-            {verifyState === 'checking' ? 'Checking on-chain conditions...' : 'Requesting decryption from validators...'}
+            Checking on-chain conditions...
+          </div>
+        ) : verifyState === 'decrypting' ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '16px' }}>
+            <div style={{ fontFamily: 'monospace', fontSize: '13px', color: '#1A1AFF', letterSpacing: '0.08em' }}>
+              Collecting validator partial decryptions{dots}
+            </div>
+            <div style={{ fontFamily: 'monospace', fontSize: '11px', color: '#555', lineHeight: 1.8 }}>
+              {elapsedSec}s elapsed · Threshold decryption in progress<br />
+              Validators are independently verifying your access and providing decryption shares.<br />
+              This typically takes 15–40 seconds. Please wait.
+            </div>
+            <div style={{ display: 'flex', gap: '4px', marginTop: '2px' }}>
+              {[0,1,2,3,4,5,6,7].map((i) => (
+                <div
+                  key={i}
+                  style={{
+                    width: '6px',
+                    height: '6px',
+                    backgroundColor: '#1A1AFF',
+                    opacity: ((elapsedSec + i) % 8 === 0) ? 1 : 0.15,
+                    transition: 'opacity 0.3s',
+                  }}
+                />
+              ))}
+            </div>
           </div>
         ) : null}
       </section>
@@ -250,14 +356,12 @@ export default function ReadContent() {
         </div>
       )}
 
-      {/* Fail state — show requirements */}
+      {/* Failed state */}
       {verifyState === 'failed' && (
         <section style={{ ...styles.section, borderLeftColor: '#CC0000' }}>
           <div style={{ ...styles.sectionLabel, color: '#CC0000' }}>CONDITIONS NOT MET</div>
           <p style={{ fontFamily: 'monospace', fontSize: '12px', color: '#ccc', lineHeight: 1.8, margin: 0 }}>
             Your wallet did not pass the access conditions set by the publisher.
-            <br />
-            Check the conditions on the publish page and qualify before trying again.
           </p>
           <button onClick={handleVerify} style={{ ...styles.btnSmall, marginTop: '8px' }}>
             Retry
@@ -265,18 +369,14 @@ export default function ReadContent() {
         </section>
       )}
 
-      {/* Decrypted content */}
+      {/* Decrypted content — rendered as markdown */}
       {verifyState === 'decrypted' && (
         <section style={{ ...styles.section, borderLeftColor: '#1A1AFF' }}>
           <div style={{ ...styles.sectionLabel, color: '#1A1AFF' }}>DECRYPTED CONTENT</div>
-          <pre style={styles.contentBox}>{decryptedContent}</pre>
+          <div style={styles.contentBox}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{decryptedContent}</ReactMarkdown>
+          </div>
         </section>
-      )}
-
-      {!isDeployed && (
-        <div style={{ color: '#666', fontSize: '11px', fontFamily: 'monospace', paddingLeft: '16px' }}>
-          ⚠ Contracts not yet deployed. Run <code>DEPLOYER_PRIVATE_KEY=0x... bash contracts/deploy.sh</code>
-        </div>
       )}
     </main>
   )
@@ -297,18 +397,8 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: '32px',
   },
-  back: {
-    color: '#fff',
-    textDecoration: 'none',
-    fontSize: '12px',
-    letterSpacing: '0.05em',
-  },
-  title: {
-    fontSize: '32px',
-    fontWeight: 900,
-    margin: 0,
-    fontFamily: 'monospace',
-  },
+  back: { color: '#fff', textDecoration: 'none', fontSize: '12px', letterSpacing: '0.05em' },
+  title: { fontSize: '32px', fontWeight: 900, margin: 0, fontFamily: 'monospace' },
   section: {
     display: 'flex',
     flexDirection: 'column',
@@ -316,28 +406,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderLeft: '2px solid #333',
     paddingLeft: '16px',
   },
-  sectionLabel: {
-    fontSize: '10px',
-    color: '#666',
-    letterSpacing: '0.15em',
-    marginBottom: '4px',
-  },
-  mono: {
-    fontFamily: 'monospace',
-    fontSize: '12px',
-    color: '#ccc',
-  },
-  input: {
-    backgroundColor: '#000',
-    color: '#fff',
-    border: '1px solid #333',
-    fontFamily: 'monospace',
-    fontSize: '13px',
-    padding: '10px 12px',
-    outline: 'none',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-  },
+  sectionLabel: { fontSize: '10px', color: '#666', letterSpacing: '0.15em', marginBottom: '4px' },
+  mono: { fontFamily: 'monospace', fontSize: '12px', color: '#ccc' },
   litmusOuter: {
     position: 'relative' as const,
     width: '100%',
@@ -382,10 +452,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'monospace',
     fontSize: '13px',
     lineHeight: 1.7,
-    whiteSpace: 'pre-wrap' as const,
-    wordBreak: 'break-word' as const,
     color: '#e0e0e0',
-    margin: 0,
     borderTop: '1px solid #222',
     paddingTop: '12px',
   },

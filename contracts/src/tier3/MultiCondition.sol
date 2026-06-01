@@ -15,9 +15,10 @@ import "../interfaces/IReadCondition.sol";
 /// isAnd.length must equal conditions.length - 1.
 contract MultiCondition is IReadCondition {
     function checkReadCondition(
-        address reader,
+        uint32 uuid,
         bytes calldata conditionData,
-        bytes calldata accessAuxData
+        bytes calldata accessAuxData,
+        address reader
     ) external view override returns (bool) {
         (address[] memory conds, bytes[] memory condDatas, bool[] memory isAnd) =
             abi.decode(conditionData, (address[], bytes[], bool[]));
@@ -26,10 +27,10 @@ contract MultiCondition is IReadCondition {
         require(condDatas.length == conds.length, "MultiCondition: data mismatch");
         require(isAnd.length == conds.length - 1, "MultiCondition: op mismatch");
 
-        bool result = IReadCondition(conds[0]).checkReadCondition(reader, condDatas[0], accessAuxData);
+        bool result = IReadCondition(conds[0]).checkReadCondition(uuid, condDatas[0], accessAuxData, reader);
 
         for (uint256 i = 1; i < conds.length; i++) {
-            bool next = IReadCondition(conds[i]).checkReadCondition(reader, condDatas[i], accessAuxData);
+            bool next = IReadCondition(conds[i]).checkReadCondition(uuid, condDatas[i], accessAuxData, reader);
             result = isAnd[i - 1] ? (result && next) : (result || next);
         }
 

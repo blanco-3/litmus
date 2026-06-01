@@ -7,9 +7,10 @@ import "../interfaces/IReadCondition.sol";
 /// Use this as writeConditionAddr when the publisher wants to write once and close.
 contract OpenWriteCondition is IWriteCondition {
     function checkWriteCondition(
-        address,
+        uint32,
         bytes calldata,
-        bytes calldata
+        bytes calldata,
+        address
     ) external pure override returns (bool) {
         return true;
     }

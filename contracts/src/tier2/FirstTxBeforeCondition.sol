@@ -9,9 +9,10 @@ import "./IActivityRegistry.sol";
 /// Note: firstTxTimestamp == 0 means unknown → fails the check.
 contract FirstTxBeforeCondition is IReadCondition {
     function checkReadCondition(
-        address reader,
+        uint32,
         bytes calldata conditionData,
-        bytes calldata
+        bytes calldata,
+        address reader
     ) external view override returns (bool) {
         (address registry, uint256 beforeTimestamp) = abi.decode(conditionData, (address, uint256));
         uint256 first = IActivityRegistry(registry).firstTxTimestamp(reader);

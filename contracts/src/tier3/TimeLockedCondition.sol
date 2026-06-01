@@ -7,9 +7,10 @@ import "../interfaces/IReadCondition.sol";
 /// conditionData: abi.encode(uint256 unlockTime)
 contract TimeLockedCondition is IReadCondition {
     function checkReadCondition(
-        address,
+        uint32,
         bytes calldata conditionData,
-        bytes calldata
+        bytes calldata,
+        address
     ) external view override returns (bool) {
         (uint256 unlockTime) = abi.decode(conditionData, (uint256));
         return block.timestamp >= unlockTime;

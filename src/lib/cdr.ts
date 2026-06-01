@@ -1,9 +1,10 @@
 'use client'
 
 import { CDRClient, initWasm } from '@piplabs/cdr-sdk'
+import type { StorageProvider } from '@piplabs/cdr-sdk'
 import type { PublicClient, WalletClient } from 'viem'
 
-const STORY_API_URL = process.env.NEXT_PUBLIC_STORY_API_URL ?? 'https://api.aeneid.storyrpc.io'
+const STORY_API_URL = process.env.NEXT_PUBLIC_STORY_API_URL ?? 'http://172.192.41.96:1317'
 
 let wasmInitialized = false
 
@@ -23,45 +24,123 @@ export function createCDRClient(publicClient: PublicClient, walletClient?: Walle
   })
 }
 
-// ── Content encryption / decryption (AES-GCM, Web Crypto) ──────────────────
+// ── Storage provider backed by Pinata IPFS ──────────────────────────────────
+// Requires NEXT_PUBLIC_PINATA_JWT env variable.
+// Get a free JWT at https://app.pinata.cloud → API Keys.
 
-export async function encryptContent(content: string, dataKey: Uint8Array): Promise<string> {
-  const keyMaterial = await crypto.subtle.importKey('raw', dataKey.slice(0, 32), 'AES-GCM', false, ['encrypt'])
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-  const encoded = new TextEncoder().encode(content)
-  const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, keyMaterial, encoded)
-  // Prepend IV (12 bytes) to ciphertext
-  const combined = new Uint8Array(12 + cipherBuf.byteLength)
-  combined.set(iv, 0)
-  combined.set(new Uint8Array(cipherBuf), 12)
-  return uint8ToBase64url(combined)
+export class LitmusStorageProvider implements StorageProvider {
+  private readonly jwt: string
+
+  constructor(jwt: string) {
+    this.jwt = jwt
+  }
+
+  async upload(data: Uint8Array): Promise<string> {
+    const form = new FormData()
+    form.append(
+      'file',
+      new Blob([data.buffer as ArrayBuffer], { type: 'application/octet-stream' }),
+      'content.bin',
+    )
+    const res = await fetch('https://api.pinata.cloud/pinning/pinFileToIPFS', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.jwt}` },
+      body: form,
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText)
+      throw new Error(`Pinata upload failed (${res.status}): ${text}`)
+    }
+    const { IpfsHash } = await res.json()
+    return IpfsHash as string
+  }
+
+  async download(cid: string): Promise<Uint8Array> {
+    // Try Pinata gateway first, fall back to public gateway
+    const urls = [
+      `https://gateway.pinata.cloud/ipfs/${cid}`,
+      `https://ipfs.io/ipfs/${cid}`,
+    ]
+    for (const url of urls) {
+      try {
+        const res = await fetch(url)
+        if (res.ok) return new Uint8Array(await res.arrayBuffer())
+      } catch {
+        // try next
+      }
+    }
+    throw new Error(`IPFS download failed for CID: ${cid}`)
+  }
 }
 
-export async function decryptContent(encryptedBase64: string, dataKey: Uint8Array): Promise<string> {
-  const combined = base64urlToUint8(encryptedBase64)
-  const iv = combined.slice(0, 12)
-  const cipherBuf = combined.slice(12)
-  const keyMaterial = await crypto.subtle.importKey('raw', dataKey.slice(0, 32), 'AES-GCM', false, ['decrypt'])
-  const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, keyMaterial, cipherBuf)
-  return new TextDecoder().decode(plainBuf)
+export function getPinataJwt(): string {
+  const jwt = process.env.NEXT_PUBLIC_PINATA_JWT
+  if (!jwt) throw new Error('NEXT_PUBLIC_PINATA_JWT is not set. See .env.local.example.')
+  return jwt
 }
 
-export function generateDataKey(): Uint8Array {
-  return crypto.getRandomValues(new Uint8Array(32))
+// ── Board metadata (public, stored as Pinata JSON pins) ─────────────────────
+
+export interface VaultMeta {
+  uuid: number
+  title: string
+  conditionPreview: string
+  createdAt: number
 }
 
-// ── Base64url helpers ───────────────────────────────────────────────────────
-
-function uint8ToBase64url(buf: Uint8Array): string {
-  let binary = ''
-  for (let i = 0; i < buf.length; i++) binary += String.fromCharCode(buf[i])
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+export async function publishMetadata(jwt: string, meta: VaultMeta): Promise<void> {
+  const body = {
+    pinataContent: meta,
+    pinataMetadata: {
+      name: `litmus-meta-${meta.uuid}`,
+      keyvalues: {
+        litmus: '1',
+        uuid: String(meta.uuid),
+        title: meta.title.slice(0, 200),
+        conditionPreview: meta.conditionPreview.slice(0, 500),
+        createdAt: String(meta.createdAt),
+      },
+    },
+  }
+  const res = await fetch('https://api.pinata.cloud/pinning/pinJSONToIPFS', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`Pinata metadata upload failed (${res.status}): ${text}`)
+  }
 }
 
-function base64urlToUint8(str: string): Uint8Array {
-  const base64 = str.replace(/-/g, '+').replace(/_/g, '/').padEnd(str.length + (4 - (str.length % 4)) % 4, '=')
-  const binary = atob(base64)
-  const buf = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i)
-  return buf
+export async function getVaultMeta(jwt: string, uuid: number): Promise<VaultMeta | null> {
+  const filter = JSON.stringify({ uuid: { value: String(uuid), op: 'eq' }, litmus: { value: '1', op: 'eq' } })
+  const url = `https://api.pinata.cloud/data/pinList?metadata[keyvalues]=${encodeURIComponent(filter)}&pageLimit=1&status=pinned`
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${jwt}` } })
+  if (!res.ok) return null
+  const { rows } = await res.json() as { rows: Array<{ metadata: { keyvalues: Record<string, string> } }> }
+  if (!rows.length) return null
+  const kv = rows[0].metadata.keyvalues
+  return {
+    uuid: Number(kv.uuid),
+    title: kv.title ?? '(untitled)',
+    conditionPreview: kv.conditionPreview ?? '',
+    createdAt: Number(kv.createdAt ?? 0),
+  }
+}
+
+export async function listPublishedContent(jwt: string): Promise<VaultMeta[]> {
+  const filter = JSON.stringify({ litmus: { value: '1', op: 'eq' } })
+  const url = `https://api.pinata.cloud/data/pinList?metadata[keyvalues]=${encodeURIComponent(filter)}&pageLimit=100&status=pinned`
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${jwt}` } })
+  if (!res.ok) throw new Error(`Pinata list failed (${res.status})`)
+  const { rows } = await res.json() as { rows: Array<{ metadata: { keyvalues: Record<string, string> } }> }
+  return rows
+    .map((row) => ({
+      uuid: Number(row.metadata.keyvalues.uuid),
+      title: row.metadata.keyvalues.title ?? '(untitled)',
+      conditionPreview: row.metadata.keyvalues.conditionPreview ?? '',
+      createdAt: Number(row.metadata.keyvalues.createdAt ?? 0),
+    }))
+    .sort((a, b) => b.createdAt - a.createdAt)
 }

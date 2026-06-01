@@ -24,6 +24,7 @@ echo "$OUTPUT"
 
 # Parse addresses from output and write to deployments/addresses.json
 OPEN_WRITE=$(echo "$OUTPUT"     | grep "OpenWriteCondition:"   | awk '{print $NF}')
+OWNER_WRITE=$(echo "$OUTPUT"    | grep "OwnerWriteCondition:"  | awk '{print $NF}')
 TOKEN_BALANCE=$(echo "$OUTPUT"  | grep "TokenBalanceCondition:" | awk '{print $NF}')
 NFT_HOLDER=$(echo "$OUTPUT"     | grep "NFTHolderCondition:"    | awk '{print $NF}')
 NATIVE_BAL=$(echo "$OUTPUT"     | grep "NativeBalanceCondition:"| awk '{print $NF}')
@@ -42,6 +43,7 @@ cat > ../deployments/addresses.json <<EOF
   "deployed": true,
   "contracts": {
     "OpenWriteCondition": "$OPEN_WRITE",
+    "OwnerWriteCondition": "$OWNER_WRITE",
     "TokenBalanceCondition": "$TOKEN_BALANCE",
     "NFTHolderCondition": "$NFT_HOLDER",
     "NativeBalanceCondition": "$NATIVE_BAL",

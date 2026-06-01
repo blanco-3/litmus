@@ -7,9 +7,10 @@ import "../interfaces/IReadCondition.sol";
 /// conditionData: abi.encode(uint256 minWei)
 contract NativeBalanceCondition is IReadCondition {
     function checkReadCondition(
-        address reader,
+        uint32,
         bytes calldata conditionData,
-        bytes calldata
+        bytes calldata,
+        address reader
     ) external view override returns (bool) {
         (uint256 minWei) = abi.decode(conditionData, (uint256));
         return reader.balance >= minWei;

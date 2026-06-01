@@ -19,9 +19,10 @@ interface ILicenseToken {
 /// licenseTermsId == 0 → any license from this token contract suffices.
 contract StoryIPLicenseCondition is IReadCondition {
     function checkReadCondition(
-        address reader,
+        uint32,
         bytes calldata conditionData,
-        bytes calldata
+        bytes calldata,
+        address reader
     ) external view override returns (bool) {
         (address licenseToken, uint256 licenseTermsId) =
             abi.decode(conditionData, (address, uint256));

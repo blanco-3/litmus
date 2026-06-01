@@ -7,6 +7,7 @@ import "../src/tier1/TokenBalanceCondition.sol";
 import "../src/tier1/NFTHolderCondition.sol";
 import "../src/tier1/NativeBalanceCondition.sol";
 import "../src/tier1/OpenWriteCondition.sol";
+import "../src/tier1/OwnerWriteCondition.sol";
 import "../src/tier2/ActivityRegistry.sol";
 import "../src/tier2/TxCountCondition.sol";
 import "../src/tier2/ContractCallCountCondition.sol";
@@ -33,10 +34,12 @@ contract Deploy is Script {
         StoryIPLicenseCondition storyIPLicense = new StoryIPLicenseCondition();
 
         OpenWriteCondition openWrite = new OpenWriteCondition();
+        OwnerWriteCondition ownerWrite = new OwnerWriteCondition();
 
         vm.stopBroadcast();
 
         console.log("OpenWriteCondition:", address(openWrite));
+        console.log("OwnerWriteCondition:", address(ownerWrite));
         console.log("TokenBalanceCondition:", address(tokenBalance));
         console.log("NFTHolderCondition:", address(nftHolder));
         console.log("NativeBalanceCondition:", address(nativeBalance));

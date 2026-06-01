@@ -8,9 +8,10 @@ import "./IActivityRegistry.sol";
 /// conditionData: abi.encode(address registry, address targetContract, uint256 minCount)
 contract ContractCallCountCondition is IReadCondition {
     function checkReadCondition(
-        address reader,
+        uint32,
         bytes calldata conditionData,
-        bytes calldata
+        bytes calldata,
+        address reader
     ) external view override returns (bool) {
         (address registry, address targetContract, uint256 minCount) =
             abi.decode(conditionData, (address, address, uint256));

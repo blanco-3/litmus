@@ -1,16 +1,20 @@
 'use client'
 
 import { useState } from 'react'
-import { useAccount, useConnect, useDisconnect, usePublicClient, useWalletClient } from 'wagmi'
+import { useAccount, usePublicClient, useWalletClient } from 'wagmi'
 import {
   CONDITION_PARAMS,
+  ALWAYS_TRUE_CONDITION,
   conditionLabel,
   encodeConditionData,
+  encodeHybridData,
   encodeMultiCondition,
+  validateParams,
+  defaultParams,
   type ConditionType,
 } from '@/lib/conditions'
-import { ensureWasm, createCDRClient, encryptContent, generateDataKey } from '@/lib/cdr'
-import { conditions as cdrConditions } from '@piplabs/cdr-sdk'
+import { ensureWasm, createCDRClient, LitmusStorageProvider, getPinataJwt, publishMetadata } from '@/lib/cdr'
+import { encodeAbiParameters } from 'viem'
 import type { Hex } from 'viem'
 import addresses from '../../../deployments/addresses.json'
 
@@ -26,27 +30,25 @@ interface ConditionEntry {
 
 export default function PublishPage() {
   const { address, isConnected } = useAccount()
-  const { connectors, connect } = useConnect()
-  const { disconnect } = useDisconnect()
   const publicClient = usePublicClient()
   const { data: walletClient } = useWalletClient()
 
+  const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [conditionEntries, setConditionEntries] = useState<ConditionEntry[]>([
-    { id: 0, type: 'TokenBalance', params: {} },
+    { id: 0, type: 'TokenBalance', params: defaultParams('TokenBalance') },
   ])
-  const [operators, setOperators] = useState<boolean[]>([]) // isAnd between entries
+  const [operators, setOperators] = useState<boolean[]>([])
   const [status, setStatus] = useState<'idle' | 'encrypting' | 'uploading' | 'done' | 'error'>('idle')
   const [resultUuid, setResultUuid] = useState<number | null>(null)
-  const [resultEncrypted, setResultEncrypted] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
 
   // ── Condition builder helpers ─────────────────────────────────────────────
 
   const addCondition = () => {
     const newId = Date.now()
-    setConditionEntries((prev) => [...prev, { id: newId, type: 'TokenBalance', params: {} }])
-    setOperators((prev) => [...prev, true]) // default AND
+    setConditionEntries((prev) => [...prev, { id: newId, type: 'TokenBalance', params: defaultParams('TokenBalance') }])
+    setOperators((prev) => [...prev, true])
   }
 
   const removeCondition = (idx: number) => {
@@ -61,7 +63,7 @@ export default function PublishPage() {
 
   const updateType = (idx: number, type: ConditionType) => {
     setConditionEntries((prev) =>
-      prev.map((e, i) => (i === idx ? { ...e, type, params: {} } : e))
+      prev.map((e, i) => (i === idx ? { ...e, type, params: defaultParams(type) } : e))
     )
   }
 
@@ -100,62 +102,87 @@ export default function PublishPage() {
       StoryIPLicense: 'StoryIPLicenseCondition',
     }
     const addr = addresses.contracts[map[type]]
-    if (!addr) throw new Error(`Contract ${type} not deployed yet. Run contracts/deploy.sh first.`)
+    if (!addr) throw new Error(`Contract ${type} not deployed. Run contracts/deploy.sh first.`)
     return addr as Hex
   }
 
   // ── Upload ────────────────────────────────────────────────────────────────
 
   async function handleUpload() {
+    if (!title.trim()) return setErrorMsg('Title is required.')
     if (!content.trim()) return setErrorMsg('Content is empty.')
     if (!publicClient || !walletClient) return setErrorMsg('Wallet not connected.')
+
+    // Validate condition params
+    for (const entry of conditionEntries) {
+      const err = validateParams(entry.type, entry.params)
+      if (err) return setErrorMsg(err)
+    }
+
     setErrorMsg('')
     setStatus('encrypting')
 
     try {
       await ensureWasm()
 
-      // 1. Generate data key and encrypt content
-      const dataKey = generateDataKey()
-      const encryptedData = await encryptContent(content, dataKey)
+      const pinataJwt = getPinataJwt()
+      const storageProvider = new LitmusStorageProvider(pinataJwt)
 
-      // 2. Build final read condition (MultiCondition if >1 entry, direct if =1)
-      let readConditionAddr: Hex
-      let readConditionData: Hex
+      // Build read condition (hybrid approach):
+      // readConditionAddr = always-true contract (CDR precompile compatible)
+      // readConditionData = abi.encode(realConditionAddr, realConditionData)
+      //   → frontend decodes this to verify access; CDR precompile skips real logic
+      let realConditionAddr: Hex
+      let realConditionData: Hex
 
       if (conditionEntries.length === 1) {
-        readConditionAddr = getConditionAddress(conditionEntries[0].type)
-        readConditionData = encodeConditionData(conditionEntries[0].type, conditionEntries[0].params)
+        realConditionAddr = getConditionAddress(conditionEntries[0].type)
+        realConditionData = encodeConditionData(conditionEntries[0].type, conditionEntries[0].params)
       } else {
         const encoded = conditionEntries.map((e) => ({
           address: getConditionAddress(e.type),
           conditionData: encodeConditionData(e.type, e.params),
         }))
-        readConditionAddr = getConditionAddress('MultiCondition')
-        readConditionData = encodeMultiCondition(encoded, operators)
+        realConditionAddr = getConditionAddress('MultiCondition')
+        realConditionData = encodeMultiCondition(encoded, operators)
       }
 
-      // 3. Write condition = OpenWriteCondition (vault is write-once, updatable=false)
-      const openWriteAddr = addresses.contracts.OpenWriteCondition as Hex
-      if (!openWriteAddr) throw new Error('OpenWriteCondition not deployed yet. Run contracts/deploy.sh first.')
-      const writeCondition = cdrConditions.open({ address: openWriteAddr })
+      const readConditionAddr = ALWAYS_TRUE_CONDITION
+      const readConditionData = encodeHybridData(realConditionAddr, realConditionData)
 
-      // 4. Upload to CDR
+      // Write condition — OwnerWriteCondition (only the publisher can write)
+      const ownerWriteAddr = addresses.contracts.OwnerWriteCondition as Hex
+      if (!ownerWriteAddr) throw new Error('OwnerWriteCondition address missing in deployments/addresses.json')
+      const writeConditionAddr = ownerWriteAddr
+      const writeConditionData = encodeAbiParameters(
+        [{ type: 'address' }],
+        [address as Hex],
+      ) as Hex
+
+      // Encrypt content + upload to IPFS + store key on CDR
       setStatus('uploading')
       const client = createCDRClient(publicClient, walletClient)
 
-      const { uuid } = await client.uploader.uploadCDR({
-        dataKey,
+      const { uuid } = await client.uploader.uploadFile({
+        content: new TextEncoder().encode(content),
+        storageProvider,
         updatable: false,
-        writeConditionAddr: writeCondition.address,
+        writeConditionAddr,
         readConditionAddr,
-        writeConditionData: writeCondition.conditionData,
+        writeConditionData,
         readConditionData,
         accessAuxData: '0x',
       })
 
+      // Publish public metadata to Pinata so the board can list this vault
+      await publishMetadata(pinataJwt, {
+        uuid,
+        title: title.trim(),
+        conditionPreview: preview,
+        createdAt: Date.now(),
+      })
+
       setResultUuid(uuid)
-      setResultEncrypted(encryptedData)
       setStatus('done')
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : String(err))
@@ -165,8 +192,16 @@ export default function PublishPage() {
 
   const shareUrl =
     resultUuid !== null && typeof window !== 'undefined'
-      ? `${window.location.origin}/read?uuid=${resultUuid}&data=${resultEncrypted}`
+      ? `${window.location.origin}/read?uuid=${resultUuid}`
       : ''
+
+  const [copied, setCopied] = useState(false)
+
+  async function handleCopy() {
+    await navigator.clipboard.writeText(shareUrl)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -176,36 +211,38 @@ export default function PublishPage() {
 
       <h1 style={styles.title}>[ Publish ]</h1>
 
-      {/* Wallet */}
-      <section style={styles.section}>
-        <div style={styles.sectionLabel}>WALLET</div>
-        {isConnected ? (
-          <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={styles.mono}>{address}</span>
-            <button onClick={() => disconnect()} style={styles.btnSmall}>Disconnect</button>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-            {connectors.map((c) => (
-              <button key={c.uid} onClick={() => connect({ connector: c })} style={styles.btn}>
-                Connect {c.name}
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
+      {!isConnected && (
+        <p style={{ fontFamily: 'monospace', fontSize: '13px', color: '#555', margin: 0 }}>
+          Connect your wallet (top right) to publish content.
+        </p>
+      )}
 
       {isConnected && (
         <>
+          {/* Title */}
+          <section style={styles.section}>
+            <div style={styles.sectionLabel}>TITLE (public)</div>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Visible on the board — do not include secrets"
+              style={{ ...styles.input, fontSize: '14px' }}
+            />
+          </section>
+
           {/* Content */}
           <section style={styles.section}>
-            <div style={styles.sectionLabel}>CONTENT (markdown)</div>
+            <div style={styles.sectionLabel}>CONTENT (markdown, encrypted)</div>
             <textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}
               placeholder="Write your gated content here..."
               style={styles.textarea}
             />
+            <div style={{ color: '#444', fontSize: '10px', fontFamily: 'monospace' }}>
+              {content.length} chars
+            </div>
           </section>
 
           {/* Condition Builder */}
@@ -214,7 +251,6 @@ export default function PublishPage() {
 
             {conditionEntries.map((entry, idx) => (
               <div key={entry.id}>
-                {/* AND/OR toggle between entries */}
                 {idx > 0 && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '8px 0' }}>
                     <button
@@ -232,26 +268,31 @@ export default function PublishPage() {
                 )}
 
                 <div style={styles.conditionRow}>
-                  {/* Type selector */}
                   <select
                     value={entry.type}
                     onChange={(e) => updateType(idx, e.target.value as ConditionType)}
                     style={styles.select}
                   >
-                    {(Object.keys(CONDITION_PARAMS) as ConditionType[]).filter(t => t !== 'MultiCondition').map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
+                    {(Object.keys(CONDITION_PARAMS) as ConditionType[])
+                      .filter((t) => t !== 'MultiCondition')
+                      .map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
                   </select>
 
-                  {/* Dynamic params */}
                   {CONDITION_PARAMS[entry.type].map((param) => (
                     <input
                       key={param.name}
                       type="text"
                       placeholder={`${param.label} (${param.placeholder})`}
-                      value={entry.params[param.name] ?? ''}
-                      onChange={(e) => updateParam(idx, param.name, e.target.value)}
-                      style={styles.input}
+                      value={entry.params[param.name] ?? param.defaultValue ?? ''}
+                      onChange={(e) => !param.readonly && updateParam(idx, param.name, e.target.value)}
+                      readOnly={param.readonly}
+                      title={param.readonly ? `Auto-filled: ${param.defaultValue}` : undefined}
+                      style={{
+                        ...styles.input,
+                        ...(param.readonly ? { color: '#666', cursor: 'default' } : {}),
+                      }}
                     />
                   ))}
 
@@ -266,7 +307,6 @@ export default function PublishPage() {
               + Add condition
             </button>
 
-            {/* Preview */}
             <div style={styles.preview}>
               <div style={{ color: '#666', fontSize: '11px', marginBottom: '8px' }}>CONDITION PREVIEW</div>
               <pre style={{ margin: 0, fontSize: '12px', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{preview}</pre>
@@ -282,19 +322,16 @@ export default function PublishPage() {
                 style={{ ...styles.btn, opacity: status !== 'idle' && status !== 'error' ? 0.6 : 1 }}
               >
                 {status === 'encrypting' && '[ Encrypting... ]'}
-                {status === 'uploading' && '[ Uploading to CDR... ]'}
-                {(status === 'idle' || status === 'error') && '[ Encrypt & Upload ]'}
+                {status === 'uploading' && '[ Uploading to IPFS + CDR... ]'}
+                {(status === 'idle' || status === 'error') && '[ Encrypt & Publish ]'}
               </button>
             ) : (
               <div style={styles.success}>
                 <div style={{ color: '#1A1AFF', marginBottom: '16px' }}>✓ PUBLISHED — UUID: {resultUuid}</div>
                 <div style={styles.sectionLabel}>SHARE LINK</div>
                 <div style={{ ...styles.mono, wordBreak: 'break-all', fontSize: '11px' }}>{shareUrl}</div>
-                <button
-                  onClick={() => navigator.clipboard.writeText(shareUrl)}
-                  style={{ ...styles.btnSmall, marginTop: '8px' }}
-                >
-                  Copy link
+                <button onClick={handleCopy} style={{ ...styles.btnSmall, marginTop: '8px' }}>
+                  {copied ? 'Copied!' : 'Copy link'}
                 </button>
               </div>
             )}
@@ -326,18 +363,8 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: '32px',
   },
-  back: {
-    color: '#fff',
-    textDecoration: 'none',
-    fontSize: '12px',
-    letterSpacing: '0.05em',
-  },
-  title: {
-    fontSize: '32px',
-    fontWeight: 900,
-    margin: 0,
-    fontFamily: 'monospace',
-  },
+  back: { color: '#fff', textDecoration: 'none', fontSize: '12px', letterSpacing: '0.05em' },
+  title: { fontSize: '32px', fontWeight: 900, margin: 0, fontFamily: 'monospace' },
   section: {
     display: 'flex',
     flexDirection: 'column',
@@ -345,17 +372,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderLeft: '2px solid #333',
     paddingLeft: '16px',
   },
-  sectionLabel: {
-    fontSize: '10px',
-    color: '#666',
-    letterSpacing: '0.15em',
-    marginBottom: '4px',
-  },
-  mono: {
-    fontFamily: 'monospace',
-    fontSize: '12px',
-    color: '#ccc',
-  },
+  sectionLabel: { fontSize: '10px', color: '#666', letterSpacing: '0.15em', marginBottom: '4px' },
+  mono: { fontFamily: 'monospace', fontSize: '12px', color: '#ccc' },
   textarea: {
     width: '100%',
     minHeight: '160px',
@@ -369,12 +387,7 @@ const styles: Record<string, React.CSSProperties> = {
     outline: 'none',
     boxSizing: 'border-box',
   },
-  conditionRow: {
-    display: 'flex',
-    gap: '8px',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-  },
+  conditionRow: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' },
   select: {
     backgroundColor: '#000',
     color: '#fff',

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <rect width="100" height="100" rx="22" fill="#000"/>
+  <defs>
+    <clipPath id="tc">
+      <path d="M33,22 L33,70 Q33,93 50,93 Q67,93 67,70 L67,22 Z"/>
+    </clipPath>
+    <linearGradient id="glassGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.07)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0.01)"/>
+    </linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="2.5"/></filter>
+  </defs>
+
+  <!-- Cap: narrow neck + wider collar -->
+  <rect x="38" y="7" width="24" height="8" rx="3.5"
+        fill="#111" stroke="rgba(255,255,255,0.30)" stroke-width="1.5"/>
+  <rect x="32" y="13" width="36" height="9" rx="2.5"
+        fill="#0a0a0a" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
+
+  <!-- Liquid (clipped to tube interior) -->
+  <g clip-path="url(#tc)">
+    <rect x="33" y="46" width="17" height="52" fill="#1A1AFF" opacity="0.92"/>
+    <rect x="50" y="46" width="17" height="52" fill="#CC0000" opacity="0.92"/>
+    <ellipse cx="50" cy="88" rx="12" ry="4" fill="rgba(255,255,255,0.08)"/>
+    <!-- Meniscus highlight -->
+    <ellipse cx="50" cy="46" rx="14" ry="3" fill="rgba(255,255,255,0.30)"/>
+  </g>
+
+  <!-- Glass tube outline -->
+  <path d="M33,22 L33,70 Q33,93 50,93 Q67,93 67,70 L67,22 Z"
+        fill="url(#glassGrad)"
+        stroke="rgba(255,255,255,0.26)" stroke-width="1.5"/>
+
+  <!-- Glass highlight strip -->
+  <path d="M40,26 Q38,55 41,76 Q43,86 47,91"
+        fill="none" stroke="rgba(255,255,255,0.17)" stroke-width="4"
+        stroke-linecap="round"/>
+
+  <!-- Bottom glow blobs -->
+  <ellipse cx="41" cy="97" rx="8" ry="2.5" fill="#1A1AFF" opacity="0.55" filter="url(#glow)"/>
+  <ellipse cx="59" cy="97" rx="8" ry="2.5" fill="#CC0000" opacity="0.55" filter="url(#glow)"/>
+</svg>
