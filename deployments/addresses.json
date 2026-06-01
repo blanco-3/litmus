@@ -17,6 +17,8 @@
     "StoryIPLicenseCondition": "0x4C197b6F0F9DCDadb0782E02b7a1b6cF0493bA94",
     "LitmusPass": "0xdde0fee35f6f4b4ea411b5f657bb4d12d2f0035f",
     "LitmusCoin": "0x78b9da2013bcb2fafc929aa8f20c6515584e4fd1",
-    "StoryLicenseToken": "0xFe3838BFb30B34170F00030B52eA4893d8aAC6bC"
+    "StoryLicenseToken": "0xFe3838BFb30B34170F00030B52eA4893d8aAC6bC",
+    "PaymentGate": "0x011edcBbeD9A4cD1cfc027BB3165Ea8b8161c3aB",
+    "PaymentGateCondition": "0xfAB1915bcCE31DE4A5f2B4c1489D42E438CB9989"
   }
 }

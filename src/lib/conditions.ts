@@ -48,6 +48,7 @@ export type ConditionType =
   | 'MultiCondition'
   | 'TimeLocked'
   | 'StoryIPLicense'
+  | 'PaymentGate'
 
 export interface ConditionParam {
   label: string
@@ -111,6 +112,17 @@ export const CONDITION_PARAMS: Record<ConditionType, ConditionParam[]> = {
   MultiCondition: [],
   TimeLocked: [
     { label: 'Unlock Date (UTC)', name: 'unlockTime', type: 'timestamp', placeholder: '2026-06-01' },
+  ],
+  PaymentGate: [
+    {
+      label: 'Payment Gate Contract',
+      name: 'paymentGate',
+      type: 'address',
+      placeholder: addresses.contracts.PaymentGate,
+      defaultValue: addresses.contracts.PaymentGate,
+      readonly: true,
+    },
+    { label: 'Price (wei)', name: 'requiredWei', type: 'uint256', placeholder: '10000000000000000' },
   ],
   StoryIPLicense: [
     { label: 'License Token Contract', name: 'licenseToken', type: 'address', placeholder: '0x...' },
@@ -196,6 +208,11 @@ export function encodeConditionData(type: ConditionType, params: Record<string, 
         parseAbiParameters('address licenseToken, uint256 licenseTermsId'),
         [p.licenseToken as Hex, BigInt(p.licenseTermsId)]
       )
+    case 'PaymentGate':
+      return encodeAbiParameters(
+        parseAbiParameters('address paymentGate, uint256 requiredWei'),
+        [p.paymentGate as Hex, BigInt(p.requiredWei)]
+      )
     case 'MultiCondition':
       return '0x'
     default:
@@ -233,6 +250,10 @@ export function conditionLabel(type: ConditionType, params: Record<string, strin
       return `Unlocks after ${params.unlockTime ?? '?'} (UTC)`
     case 'StoryIPLicense':
       return `Holds Story IP license${params.licenseTermsId && params.licenseTermsId !== '0' ? ` #${params.licenseTermsId}` : ' (any)'}`
+    case 'PaymentGate': {
+      const ip = Number(params.requiredWei ?? 0) / 1e18
+      return `Pay ${ip} IP to read`
+    }
     case 'MultiCondition':
       return 'Multi-condition group'
     default:

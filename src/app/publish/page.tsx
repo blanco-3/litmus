@@ -100,6 +100,7 @@ export default function PublishPage() {
       MultiCondition: 'MultiCondition',
       TimeLocked: 'TimeLockedCondition',
       StoryIPLicense: 'StoryIPLicenseCondition',
+      PaymentGate: 'PaymentGateCondition',
     }
     const addr = addresses.contracts[map[type]]
     if (!addr) throw new Error(`Contract ${type} not deployed. Run contracts/deploy.sh first.`)
@@ -183,6 +184,28 @@ export default function PublishPage() {
       })
 
       setResultUuid(uuid)
+
+      // If PaymentGate condition: register the uuid with the gate contract
+      if (conditionEntries.length === 1 && conditionEntries[0].type === 'PaymentGate') {
+        const params = conditionEntries[0].params
+        const REGISTER_ABI = [{
+          name: 'register', type: 'function', stateMutability: 'nonpayable',
+          inputs: [
+            { name: 'uuid', type: 'uint32' },
+            { name: 'recipient', type: 'address' },
+            { name: 'requiredWei', type: 'uint256' },
+          ],
+          outputs: [],
+        }] as const
+        const gateAddr = addresses.contracts.PaymentGate as `0x${string}`
+        await walletClient.writeContract({
+          address: gateAddr,
+          abi: REGISTER_ABI,
+          functionName: 'register',
+          args: [uuid as never, address as `0x${string}`, BigInt(params.requiredWei ?? '0')],
+        })
+      }
+
       setStatus('done')
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : String(err))

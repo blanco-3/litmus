@@ -7,6 +7,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ensureWasm, createCDRClient, LitmusStorageProvider, getPinataJwt, getVaultMeta, type VaultMeta } from '@/lib/cdr'
 import { ALWAYS_TRUE_CONDITION, decodeHybridData } from '@/lib/conditions'
+import { decodeAbiParameters, parseAbiParameters, formatEther } from 'viem'
+import addresses from '../../../deployments/addresses.json'
 import type { Hex } from 'viem'
 
 type VerifyState = 'idle' | 'checking' | 'proven' | 'failed' | 'decrypting' | 'decrypted' | 'error'
@@ -61,6 +63,8 @@ export default function ReadContent() {
   const [verifyState, setVerifyState] = useState<VerifyState>('idle')
   const [decryptedContent, setDecryptedContent] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
+  const [paymentInfo, setPaymentInfo] = useState<{ gateAddr: Hex; requiredWei: bigint } | null>(null)
+  const [payState, setPayState] = useState<'idle' | 'paying' | 'paid'>('idle')
   const [litmusProgress, setLitmusProgress] = useState(0)
   const [litmusColor, setLitmusColor] = useState<'#1A1AFF' | '#CC0000' | '#444'>('#444')
   const [vaultMeta, setVaultMeta] = useState<VaultMeta | null>(null)
@@ -135,11 +139,39 @@ export default function ReadContent() {
     }
   }, [uuid])
 
+  const PAYMENT_GATE_PAY_ABI = [{
+    name: 'pay', type: 'function', stateMutability: 'payable',
+    inputs: [{ name: 'uuid', type: 'uint32' }], outputs: [],
+  }] as const
+
+  async function handlePay() {
+    if (!walletClient || !publicClient || !paymentInfo || !uuid) return
+    setPayState('paying')
+    try {
+      const hash = await walletClient.writeContract({
+        address: paymentInfo.gateAddr,
+        abi: PAYMENT_GATE_PAY_ABI,
+        functionName: 'pay',
+        args: [Number(uuid) as never],
+        value: paymentInfo.requiredWei,
+      })
+      await publicClient.waitForTransactionReceipt({ hash })
+      setPayState('paid')
+      // Auto re-verify after payment confirmed
+      setTimeout(() => handleVerify(), 300)
+    } catch (err: unknown) {
+      setPayState('idle')
+      setErrorMsg(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   async function handleVerify() {
     if (!uuid.trim()) return setErrorMsg('Enter a UUID.')
     if (!publicClient || !walletClient || !address) return setErrorMsg('Connect your wallet first.')
 
     setErrorMsg('')
+    setPaymentInfo(null)
+    setPayState('idle')
     setVerifyState('checking')
     setLitmusProgress(0)
     setLitmusColor('#444')
@@ -192,6 +224,17 @@ export default function ReadContent() {
       }
 
       if (!canRead) {
+        // Detect PaymentGate condition — show Pay button instead of generic failure
+        const pgAddr = (addresses.contracts.PaymentGateCondition as string).toLowerCase()
+        if (conditionAddr.toLowerCase() === pgAddr) {
+          try {
+            const [gateAddr, requiredWei] = decodeAbiParameters(
+              parseAbiParameters('address, uint256'),
+              conditionData
+            )
+            setPaymentInfo({ gateAddr: gateAddr as Hex, requiredWei: requiredWei as bigint })
+          } catch { /* ignore */ }
+        }
         setVerifyState('failed')
         animateLitmus('#CC0000')
         return
@@ -360,12 +403,31 @@ export default function ReadContent() {
       {verifyState === 'failed' && (
         <section style={{ ...styles.section, borderLeftColor: '#CC0000' }}>
           <div style={{ ...styles.sectionLabel, color: '#CC0000' }}>CONDITIONS NOT MET</div>
-          <p style={{ fontFamily: 'monospace', fontSize: '12px', color: '#ccc', lineHeight: 1.8, margin: 0 }}>
-            Your wallet did not pass the access conditions set by the publisher.
-          </p>
-          <button onClick={handleVerify} style={{ ...styles.btnSmall, marginTop: '8px' }}>
-            Retry
-          </button>
+          {paymentInfo ? (
+            <>
+              <p style={{ fontFamily: 'monospace', fontSize: '12px', color: '#ccc', lineHeight: 1.8, margin: 0 }}>
+                This article requires a payment of{' '}
+                <strong style={{ color: '#fff' }}>{formatEther(paymentInfo.requiredWei)} IP</strong>{' '}
+                to unlock. Payment goes directly to the publisher.
+              </p>
+              <button
+                onClick={handlePay}
+                disabled={payState === 'paying' || payState === 'paid'}
+                style={{ ...styles.btnSmall, marginTop: '12px', borderColor: '#1A1AFF', color: '#1A1AFF' }}
+              >
+                {payState === 'paying' ? '[ sending... ]' : payState === 'paid' ? '[ paid — verifying... ]' : `[ Pay ${formatEther(paymentInfo.requiredWei)} IP ]`}
+              </button>
+            </>
+          ) : (
+            <>
+              <p style={{ fontFamily: 'monospace', fontSize: '12px', color: '#ccc', lineHeight: 1.8, margin: 0 }}>
+                Your wallet did not pass the access conditions set by the publisher.
+              </p>
+              <button onClick={handleVerify} style={{ ...styles.btnSmall, marginTop: '8px' }}>
+                Retry
+              </button>
+            </>
+          )}
         </section>
       )}
 
