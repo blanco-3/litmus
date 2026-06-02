@@ -4,7 +4,14 @@ import { CDRClient, initWasm } from '@piplabs/cdr-sdk'
 import type { StorageProvider } from '@piplabs/cdr-sdk'
 import type { PublicClient, WalletClient } from 'viem'
 
-const STORY_API_URL = process.env.NEXT_PUBLIC_STORY_API_URL ?? 'http://172.192.41.96:1317'
+// In the browser, always route through the Next.js proxy so the private DKG IP
+// is never exposed to clients. Server-side (scripts, SSR) use the direct IP.
+function getApiUrl(): string {
+  if (typeof window !== 'undefined') {
+    return `${window.location.origin}/api/cdr-proxy`
+  }
+  return process.env.NEXT_PUBLIC_STORY_API_URL ?? 'http://172.192.41.96:1317'
+}
 
 let wasmInitialized = false
 
@@ -20,7 +27,7 @@ export function createCDRClient(publicClient: PublicClient, walletClient?: Walle
     network: 'testnet',
     publicClient,
     walletClient,
-    apiUrl: STORY_API_URL,
+    apiUrl: getApiUrl(),
   })
 }
 

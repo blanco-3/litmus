@@ -1,5 +1,7 @@
 # LITMUS
 
+**Live:** https://litmus-971342541474.asia-northeast3.run.app
+
 > **Prove you qualify. Read what others can't.**
 
 On-chain activity gated content vault powered by [CDR](https://github.com/piplabs/cdr-sdk) on Story Protocol.
