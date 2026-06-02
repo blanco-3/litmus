@@ -2,24 +2,24 @@
 pragma solidity ^0.8.20;
 
 import "../interfaces/IReadCondition.sol";
+import "../interfaces/ICDRVault.sol";
 
 /// @notice AND/OR combinator for multiple IReadCondition contracts.
-/// conditionData: abi.encode(address[] conditions, bytes[] conditionDatas, bool[] isAnd)
-///
-/// Evaluation (left-to-right, no precedence):
-///   result = checkReadCondition(conditions[0])
-///   for i in 1..n:
-///     if isAnd[i-1]: result = result && checkReadCondition(conditions[i])
-///     else:          result = result || checkReadCondition(conditions[i])
-///
-/// isAnd.length must equal conditions.length - 1.
+/// conditionData (stored in vault): abi.encode(address[] conditions, bytes[] conditionDatas, bool[] isAnd)
+/// Note: sub-conditions are also called with uuid so they self-read their own data if needed.
+///       conditionDatas here are ignored by sub-conditions that use self-reading pattern.
 contract MultiCondition is IReadCondition {
+    ICDRVault constant CDR = ICDRVault(0xCCCcCC0000000000000000000000000000000005);
+
     function checkReadCondition(
         uint32 uuid,
-        bytes calldata conditionData,
+        bytes calldata,
         bytes calldata accessAuxData,
         address reader
     ) external view override returns (bool) {
+        bytes memory conditionData = CDR.vaults(uuid).readConditionData;
+        if (conditionData.length == 0) return false;
+
         (address[] memory conds, bytes[] memory condDatas, bool[] memory isAnd) =
             abi.decode(conditionData, (address[], bytes[], bool[]));
 

@@ -224,17 +224,37 @@ export default function ReadContent() {
       }
 
       if (!canRead) {
-        // Detect PaymentGate condition — show Pay button instead of generic failure
-        const pgAddr = (addresses.contracts.PaymentGateCondition as string).toLowerCase()
-        if (conditionAddr.toLowerCase() === pgAddr) {
+        // Detect PaymentGate condition — check hasPaid() directly and show Pay button
+        const pgCondAddr = (addresses.contracts.PaymentGateCondition as string).toLowerCase()
+        if (conditionAddr.toLowerCase() === pgCondAddr) {
           try {
             const [gateAddr, requiredWei] = decodeAbiParameters(
               parseAbiParameters('address, uint256'),
               conditionData
             )
-            setPaymentInfo({ gateAddr: gateAddr as Hex, requiredWei: requiredWei as bigint })
+            // Verify hasPaid on-chain using vault uuid from URL
+            const HAS_PAID_ABI = [{
+              name: 'hasPaid', type: 'function', stateMutability: 'view',
+              inputs: [{ name: 'uuid', type: 'uint32' }, { name: 'reader', type: 'address' }],
+              outputs: [{ name: '', type: 'bool' }],
+            }] as const
+            const paid = await publicClient.readContract({
+              address: gateAddr as Hex,
+              abi: HAS_PAID_ABI,
+              functionName: 'hasPaid',
+              args: [Number(uuid) as never, address],
+            })
+            if (paid) {
+              // Already paid — proceed to decrypt
+              canRead = true
+            } else {
+              setPaymentInfo({ gateAddr: gateAddr as Hex, requiredWei: requiredWei as bigint })
+            }
           } catch { /* ignore */ }
         }
+      }
+
+      if (!canRead) {
         setVerifyState('failed')
         animateLitmus('#CC0000')
         return

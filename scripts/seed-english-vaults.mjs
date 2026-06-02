@@ -1,6 +1,6 @@
 /**
  * Seed English-language vaults for all condition types.
- * Replaces the original Korean-content vaults on the board.
+ * Uses real condition contracts directly as readConditionAddr (v1 interface).
  * Run: node --env-file=.env.local scripts/seed-english-vaults.mjs
  */
 import { CDRClient, initWasm } from '@piplabs/cdr-sdk'
@@ -35,8 +35,6 @@ const {
   StoryLicenseToken: STORY_LICENSE_TOKEN,
 } = addresses.contracts
 
-const ALWAYS_TRUE = '0xd019fA1e1E5e5731D18C633f1aE890022cf090cd'
-
 const storyAeneid = defineChain({
   id: 1315, name: 'Story Aeneid Testnet',
   nativeCurrency: { name: 'IP', symbol: 'IP', decimals: 18 },
@@ -44,13 +42,6 @@ const storyAeneid = defineChain({
 })
 
 const enc = (types, values) => encodeAbiParameters(parseAbiParameters(types), values)
-
-function encodeHybridData(conditionAddr, conditionData) {
-  return encodeAbiParameters(
-    parseAbiParameters('address conditionAddr, bytes conditionData'),
-    [conditionAddr, conditionData]
-  )
-}
 
 class PinataStorage {
   async upload(data) {
@@ -90,10 +81,8 @@ const POSTS = [
   {
     title: '[NFT Gate] Litmus Pass Holders Only',
     conditionPreview: `Hold a Litmus Pass NFT (${LITMUS_PASS})`,
-    readCond: {
-      address: NFT_HOLDER,
-      conditionData: enc('address nftContract, uint256 minBalance', [LITMUS_PASS, 1n]),
-    },
+    readConditionAddr: NFT_HOLDER,
+    readConditionData: enc('address nftContract, uint256 minBalance', [LITMUS_PASS, 1n]),
     content: `# Litmus Pass Holders Only
 
 You're reading this because you hold a **Litmus Pass NFT**.
@@ -125,10 +114,8 @@ You hold the pass. You earned the read.
   {
     title: '[Token Gate] Hold 100 LCOIN',
     conditionPreview: `Hold >= 100 LCOIN (${LITMUS_COIN})`,
-    readCond: {
-      address: TOKEN_BAL,
-      conditionData: enc('address token, uint256 minAmount', [LITMUS_COIN, 100n * 10n ** 18n]),
-    },
+    readConditionAddr: TOKEN_BAL,
+    readConditionData: enc('address token, uint256 minAmount', [LITMUS_COIN, 100n * 10n ** 18n]),
     content: `# Token Gated Content — 100 LCOIN Required
 
 You're in because your wallet holds at least **100 LCOIN**.
@@ -147,7 +134,6 @@ Project tokens, governance tokens, utility tokens — set a minimum balance and 
 - GameFi: in-game token threshold unlocks strategy content
 - DAOs: membership token required to read internal docs
 
-The threshold you set determines the scarcity of your content.
 Token holdings become **access rights**, not just financial assets.
 
 ---
@@ -160,10 +146,8 @@ Welcome, LCOIN holder.
   {
     title: '[On-Chain OG] 10+ Transactions on Aeneid',
     conditionPreview: `Sent >= 10 transactions on Aeneid (ActivityRegistry: ${ACTIVITY_REG})`,
-    readCond: {
-      address: TX_COUNT,
-      conditionData: enc('address registry, uint256 minCount', [ACTIVITY_REG, 10n]),
-    },
+    readConditionAddr: TX_COUNT,
+    readConditionData: enc('address registry, uint256 minCount', [ACTIVITY_REG, 10n]),
     content: `# OG-Gated Content — 10 Transactions Required
 
 This content is unlocked for wallets with **10 or more transactions** on Aeneid testnet.
@@ -178,8 +162,7 @@ Not just a balance check — actual on-chain activity.
 ActivityRegistry.txCount(your_address) >= 10
 \`\`\`
 
-Litmus reads transaction count (nonce) from the chain and stores it in \`ActivityRegistry\`.
-When you connect your wallet, the count is automatically synced.
+Litmus reads transaction count from the chain and stores it in \`ActivityRegistry\`.
 
 ---
 
@@ -201,10 +184,8 @@ You've been here. You have the receipts.
   {
     title: '[Story Protocol] IP License Holders',
     conditionPreview: `Hold any Story Protocol IP License (LicenseToken: ${STORY_LICENSE_TOKEN})`,
-    readCond: {
-      address: STORY_LIC_COND,
-      conditionData: enc('address licenseToken, uint256 licenseTermsId', [STORY_LICENSE_TOKEN, 0n]),
-    },
+    readConditionAddr: STORY_LIC_COND,
+    readConditionData: enc('address licenseToken, uint256 licenseTermsId', [STORY_LICENSE_TOKEN, 0n]),
     content: `# Story Protocol IP License Gate
 
 You're reading this because you hold a **Story Protocol IP License Token**.
@@ -225,13 +206,8 @@ When a creator registers IP on Story Protocol and issues licenses:
 
 ---
 
-## What this means
-
 IP licensing becomes a **content access mechanism**.
 Not just financial rights — but a key to exclusive creative work.
-
-Litmus + CDR + Story Protocol creates a new layer:
-where owning a license means reading what others can't.
 `,
   },
 
@@ -239,10 +215,8 @@ where owning a license means reading what others can't.
   {
     title: '[Balance Gate] Hold 1 IP',
     conditionPreview: 'Hold >= 1 IP (native token)',
-    readCond: {
-      address: NATIVE_BAL,
-      conditionData: enc('uint256 minWei', [1n * 10n ** 18n]),
-    },
+    readConditionAddr: NATIVE_BAL,
+    readConditionData: enc('uint256 minWei', [1n * 10n ** 18n]),
     content: `# Native Balance Gate — 1 IP Required
 
 Your wallet holds at least **1 IP** on the Story Aeneid testnet.
@@ -256,8 +230,6 @@ The simplest possible gate: do you have the network's native token?
 This can serve as a basic Sybil filter — empty wallets don't get in.
 Combined with other conditions via MultiCondition, it adds a soft economic barrier.
 
-Get testnet IP from the faucet at [aeneid.storyscan.xyz](https://aeneid.storyscan.xyz).
-
 ---
 
 You have skin in the game. The gate is open.
@@ -268,10 +240,8 @@ You have skin in the game. The gate is open.
   {
     title: '[Time Lock] Unlocked After Jan 1, 2026',
     conditionPreview: 'Unlocks after 2026-01-01 (embargo gate)',
-    readCond: {
-      address: TIME_LOCKED,
-      conditionData: enc('uint256 unlockTime', [BigInt(Math.floor(new Date('2026-01-01').getTime() / 1000))]),
-    },
+    readConditionAddr: TIME_LOCKED,
+    readConditionData: enc('uint256 unlockTime', [BigInt(Math.floor(new Date('2026-01-01').getTime() / 1000))]),
     content: `# Time-Locked Content — Embargo Gate
 
 This content was locked until **January 1, 2026**.
@@ -322,8 +292,8 @@ for (const post of POSTS) {
       updatable: false,
       writeConditionAddr: OPEN_WRITE,
       writeConditionData: '0x',
-      readConditionAddr: ALWAYS_TRUE,
-      readConditionData: encodeHybridData(post.readCond.address, post.readCond.conditionData),
+      readConditionAddr: post.readConditionAddr,   // real contract, no always-true
+      readConditionData: post.readConditionData,
       accessAuxData: '0x',
     })
     console.log(`  UUID: ${uuid}`)

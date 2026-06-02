@@ -1,5 +1,6 @@
 /**
  * Seed a pay-to-read vault gated by PaymentGate (0.01 IP).
+ * CDR uses always-true; frontend checks PaymentGate.hasPaid(uuid, reader) directly.
  * Run: node --env-file=.env.local scripts/seed-payment-gate.mjs
  */
 import { CDRClient, initWasm } from '@piplabs/cdr-sdk'
@@ -20,7 +21,12 @@ const API_URL = process.env.NEXT_PUBLIC_STORY_API_URL ?? 'http://172.192.41.96:1
 
 if (!JWT || !PK) { console.error('Missing JWT or PK'); process.exit(1) }
 
-const { OpenWriteCondition: OPEN_WRITE, PaymentGate: PG_GATE, PaymentGateCondition: PG_COND } = addresses.contracts
+const {
+  OpenWriteCondition: OPEN_WRITE,
+  PaymentGate: PG_GATE,
+  PaymentGateCondition: PG_COND,
+} = addresses.contracts
+
 const ALWAYS_TRUE = '0xd019fA1e1E5e5731D18C633f1aE890022cf090cd'
 const REQUIRED_WEI = BigInt('10000000000000000') // 0.01 IP
 
@@ -61,7 +67,7 @@ No intermediary. No platform cut. Instant settlement on Story Aeneid testnet.
 1. Publisher sets a price per vault (UUID-based)
 2. Reader clicks **Pay 0.01 IP** → MetaMask sends IP to the publisher
 3. \`PaymentGate.hasPaid(uuid, reader)\` becomes \`true\`
-4. CDR decrypts the content — the reader can now access it
+4. Content is decrypted and displayed
 
 This is the simplest form of on-chain content monetization:
 - No subscription
@@ -90,8 +96,11 @@ const walletClient = createWalletClient({ account, chain: storyAeneid, transport
 const cdrClient    = new CDRClient({ network: 'testnet', publicClient, walletClient, apiUrl: API_URL })
 const storage      = new PinataStorage()
 
+// conditionData encodes (paymentGate, requiredWei) — uuid is not needed here
+// because frontend calls hasPaid(urlUuid, reader) directly using the vault's uuid from URL
 const conditionData     = encodeAbiParameters(parseAbiParameters('address, uint256'), [PG_GATE, REQUIRED_WEI])
-const readConditionData = encodeAbiParameters(parseAbiParameters('address, bytes'),   [PG_COND, conditionData])
+// Hybrid: readConditionAddr = always-true, readConditionData = encode(PG_COND, conditionData)
+const readConditionData = encodeAbiParameters(parseAbiParameters('address, bytes'), [PG_COND, conditionData])
 
 console.log('Uploading vault...')
 const { uuid } = await cdrClient.uploader.uploadFile({
@@ -134,4 +143,4 @@ await fetch('https://api.pinata.cloud/pinning/pinJSONToIPFS', {
   }),
 })
 console.log('Pinned metadata.')
-console.log('Done. Share URL: /read?uuid=' + uuid)
+console.log('Done. UUID:', uuid)

@@ -129,27 +129,33 @@ export default function PublishPage() {
       const pinataJwt = getPinataJwt()
       const storageProvider = new LitmusStorageProvider(pinataJwt)
 
-      // Build read condition (hybrid approach):
-      // readConditionAddr = always-true contract (CDR precompile compatible)
-      // readConditionData = abi.encode(realConditionAddr, realConditionData)
-      //   → frontend decodes this to verify access; CDR precompile skips real logic
-      let realConditionAddr: Hex
-      let realConditionData: Hex
+      // Build read condition:
+      // For PaymentGate: readConditionAddr = always-true (hybrid), because PaymentGate
+      //   has a chicken-and-egg uuid problem. Frontend checks hasPaid() directly.
+      // For all others: readConditionAddr = real condition contract (self-reading pattern).
+      //   The contract reads its own config from CDR vault storage — no hybrid needed.
+      let readConditionAddr: Hex
+      let readConditionData: Hex
 
-      if (conditionEntries.length === 1) {
-        realConditionAddr = getConditionAddress(conditionEntries[0].type)
-        realConditionData = encodeConditionData(conditionEntries[0].type, conditionEntries[0].params)
+      const isSinglePaymentGate = conditionEntries.length === 1 && conditionEntries[0].type === 'PaymentGate'
+
+      if (isSinglePaymentGate) {
+        // PaymentGate: hybrid — always-true for CDR, hybrid data for frontend
+        const realAddr = getConditionAddress('PaymentGate')
+        const realData = encodeConditionData('PaymentGate', conditionEntries[0].params)
+        readConditionAddr = ALWAYS_TRUE_CONDITION
+        readConditionData = encodeHybridData(realAddr, realData)
+      } else if (conditionEntries.length === 1) {
+        readConditionAddr = getConditionAddress(conditionEntries[0].type)
+        readConditionData = encodeConditionData(conditionEntries[0].type, conditionEntries[0].params)
       } else {
         const encoded = conditionEntries.map((e) => ({
           address: getConditionAddress(e.type),
           conditionData: encodeConditionData(e.type, e.params),
         }))
-        realConditionAddr = getConditionAddress('MultiCondition')
-        realConditionData = encodeMultiCondition(encoded, operators)
+        readConditionAddr = getConditionAddress('MultiCondition')
+        readConditionData = encodeMultiCondition(encoded, operators)
       }
-
-      const readConditionAddr = ALWAYS_TRUE_CONDITION
-      const readConditionData = encodeHybridData(realConditionAddr, realConditionData)
 
       // Write condition — OwnerWriteCondition (only the publisher can write)
       const ownerWriteAddr = addresses.contracts.OwnerWriteCondition as Hex

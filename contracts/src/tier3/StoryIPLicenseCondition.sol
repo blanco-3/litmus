@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "../interfaces/IReadCondition.sol";
+import "../interfaces/ICDRVault.sol";
 
 interface ILicenseToken {
     function balanceOf(address account) external view returns (uint256);
@@ -13,17 +14,20 @@ interface ILicenseToken {
     function ownerOf(uint256 tokenId) external view returns (address);
 }
 
-/// @notice Grants access if reader holds a Story Protocol IP license token
-///         matching the specified licenseTermsId.
-/// conditionData: abi.encode(address licenseToken, uint256 licenseTermsId)
+/// @notice Grants access if reader holds a Story Protocol IP license token.
+/// conditionData (stored in vault): abi.encode(address licenseToken, uint256 licenseTermsId)
 /// licenseTermsId == 0 → any license from this token contract suffices.
 contract StoryIPLicenseCondition is IReadCondition {
+    ICDRVault constant CDR = ICDRVault(0xCCCcCC0000000000000000000000000000000005);
+
     function checkReadCondition(
-        uint32,
-        bytes calldata conditionData,
+        uint32 uuid,
+        bytes calldata,
         bytes calldata,
         address reader
     ) external view override returns (bool) {
+        bytes memory conditionData = CDR.vaults(uuid).readConditionData;
+        if (conditionData.length == 0) return false;
         (address licenseToken, uint256 licenseTermsId) =
             abi.decode(conditionData, (address, uint256));
 
