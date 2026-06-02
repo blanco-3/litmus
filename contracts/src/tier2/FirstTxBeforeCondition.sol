@@ -12,13 +12,13 @@ contract FirstTxBeforeCondition is IReadCondition {
 
     function checkReadCondition(
         uint32 uuid,
-        bytes calldata,
+        bytes calldata conditionData,
         bytes calldata,
         address reader
     ) external view override returns (bool) {
-        bytes memory conditionData = CDR.vaults(uuid).readConditionData;
-        if (conditionData.length == 0) return false;
-        (address registry, uint256 beforeTimestamp) = abi.decode(conditionData, (address, uint256));
+        bytes memory data = conditionData.length > 0 ? conditionData : CDR.vaults(uuid).readConditionData;
+        if (data.length == 0) return false;
+        (address registry, uint256 beforeTimestamp) = abi.decode(data, (address, uint256));
         uint256 first = IActivityRegistry(registry).firstTxTimestamp(reader);
         return first != 0 && first < beforeTimestamp;
     }

@@ -12,14 +12,14 @@ contract ContractCallCountCondition is IReadCondition {
 
     function checkReadCondition(
         uint32 uuid,
-        bytes calldata,
+        bytes calldata conditionData,
         bytes calldata,
         address reader
     ) external view override returns (bool) {
-        bytes memory conditionData = CDR.vaults(uuid).readConditionData;
-        if (conditionData.length == 0) return false;
+        bytes memory data = conditionData.length > 0 ? conditionData : CDR.vaults(uuid).readConditionData;
+        if (data.length == 0) return false;
         (address registry, address targetContract, uint256 minCount) =
-            abi.decode(conditionData, (address, address, uint256));
+            abi.decode(data, (address, address, uint256));
         return IActivityRegistry(registry).contractCallCount(reader, targetContract) >= minCount;
     }
 }

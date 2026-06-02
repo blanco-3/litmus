@@ -3,7 +3,7 @@ import { createPublicClient, createWalletClient, http, defineChain, isAddress } 
 import { privateKeyToAccount } from 'viem/accounts'
 
 const RPC_URL = 'https://aeneid.storyrpc.io'
-const ACTIVITY_REGISTRY = '0x14b9b7c2a1Df93AF1A22BA79E3072e1d036920Af'
+const ACTIVITY_REGISTRY = '0xC2e9C0c8178B28bafc750ad5557EF7d13aFA0e35'
 
 const REGISTRY_ABI = [
   {

@@ -124,6 +124,13 @@ export default function PublishPage() {
     setStatus('encrypting')
 
     try {
+      // Sync tx count to ActivityRegistry (background — don't block publish)
+      fetch('/api/register-activity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address }),
+      }).catch(() => {})
+
       await ensureWasm()
 
       const pinataJwt = getPinataJwt()

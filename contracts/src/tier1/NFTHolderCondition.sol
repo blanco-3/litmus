@@ -15,13 +15,13 @@ contract NFTHolderCondition is IReadCondition {
 
     function checkReadCondition(
         uint32 uuid,
-        bytes calldata,
+        bytes calldata conditionData,
         bytes calldata,
         address reader
     ) external view override returns (bool) {
-        bytes memory conditionData = CDR.vaults(uuid).readConditionData;
-        if (conditionData.length == 0) return false;
-        (address nftContract, uint256 minBalance) = abi.decode(conditionData, (address, uint256));
+        bytes memory data = conditionData.length > 0 ? conditionData : CDR.vaults(uuid).readConditionData;
+        if (data.length == 0) return false;
+        (address nftContract, uint256 minBalance) = abi.decode(data, (address, uint256));
         return IERC721(nftContract).balanceOf(reader) >= minBalance;
     }
 }

@@ -11,13 +11,13 @@ contract TimeLockedCondition is IReadCondition {
 
     function checkReadCondition(
         uint32 uuid,
-        bytes calldata,
+        bytes calldata conditionData,
         bytes calldata,
         address
     ) external view override returns (bool) {
-        bytes memory conditionData = CDR.vaults(uuid).readConditionData;
-        if (conditionData.length == 0) return false;
-        (uint256 unlockTime) = abi.decode(conditionData, (uint256));
+        bytes memory data = conditionData.length > 0 ? conditionData : CDR.vaults(uuid).readConditionData;
+        if (data.length == 0) return false;
+        (uint256 unlockTime) = abi.decode(data, (uint256));
         return block.timestamp >= unlockTime;
     }
 }

@@ -180,6 +180,13 @@ export default function ReadContent() {
       // ensureWasm() was already called on mount — this is a no-op if WASM is ready
       await ensureWasm()
 
+      // Sync on-chain tx count to ActivityRegistry (for TxCount conditions)
+      fetch('/api/register-activity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address }),
+      }).catch(() => {})
+
       // 1. Use pre-fetched vault data or fall back to a live RPC call
       const vault = (vaultCacheRef.current ?? await publicClient.readContract({
         address: CDR_ADDR,
